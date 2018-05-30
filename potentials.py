@@ -34,14 +34,20 @@ def nn_layer(input_tensor, input_dim, output_dim, act = _tf.nn.selu,
         #    dtype = _tf.float64), name = "W")
         weights = _tf.get_variable("w", dtype = _tf.float64,
             shape = [input_dim, output_dim], initializer = _tf.random_normal_initializer(
-            stddev = 1./_np.sqrt(input_dim), dtype = _tf.float64))
-        _tf.add_to_collection(_tf.GraphKeys.REGULARIZATION_LOSSES, weights)
+            stddev = 1./_np.sqrt(input_dim), dtype = _tf.float64),
+            collections = [_tf.GraphKeys.MODEL_VARIABLES,
+                            _tf.GraphKeys.REGULARIZATION_LOSSES,
+                            _tf.GraphKeys.GLOBAL_VARIABLES])
         if initial_bias == None:
             biases = _tf.get_variable("b", dtype = _tf.float64, shape = [output_dim],
-                initializer = _tf.constant_initializer(0.01, dtype = _tf.float64))
+                initializer = _tf.constant_initializer(0.01, dtype = _tf.float64),
+                collections = [_tf.GraphKeys.MODEL_VARIABLES,
+                            _tf.GraphKeys.GLOBAL_VARIABLES])
         else:
             biases = _tf.get_variable("b", dtype = _tf.float64, shape = [output_dim],
-                initializer = _tf.constant_initializer(initial_bias, dtype = _tf.float64))
+                initializer = _tf.constant_initializer(initial_bias, dtype = _tf.float64),
+                collections = [_tf.GraphKeys.MODEL_VARIABLES,
+                            _tf.GraphKeys.GLOBAL_VARIABLES])
         preactivate = _tf.matmul(input_tensor, weights) + biases
         if act == None:
             activations = preactivate
@@ -85,7 +91,7 @@ class EAMpotential():
             name = "E_prediction")
 
         # Tensorflow operation to initialize the variables of the atomic networks
-        self.init_vars = [a.init_vars for a in self.ANNs.itervalues()]
+        #self.init_vars = [a.init_vars for a in self.ANNs.itervalues()]
 
         self.num_atoms =  _tf.reduce_sum(
             [_tf.sparse_reduce_sum(m, axis = 1) for m in self.atom_maps.itervalues()],
@@ -98,8 +104,12 @@ class EAMpotential():
             _tf.summary.scalar("SSE", self.sse, family = "performance")
         with _tf.name_scope("MSE"):
             self.mse = _tf.losses.mean_squared_error(self.target,
-                self.E_predict, weights = 1.0/self.num_atoms)
+                self.E_predict, weights = 1.0/self.num_atoms**2)
             _tf.summary.scalar("MSE", self.mse, family = "performance")
+
+        self.variables = _tf.get_collection(_tf.GraphKeys.MODEL_VARIABLES,
+            scope = _tf.get_default_graph().get_name_scope())
+        self.saver = _tf.train.Saver(self.variables)
 
 
 class BPAtomicNN():
@@ -121,9 +131,9 @@ class BPAtomicNN():
         self.output, out_weights, out_bias = nn_layer(hidden_layers[-1],
             layers[-1], 1, act = None, initial_bias = _np.array([offset],
             dtype = _np.float64), name = "outputLayer")
-        self.variables = hidden_vars + [out_weights, out_bias]
-        self.init_vars = _tf.variables_initializer(self.variables,
-            name = "ANN_initializer")
+        #self.variables = hidden_vars + [out_weights, out_bias]
+        #self.init_vars = _tf.variables_initializer(self.variables,
+        #    name = "ANN_initializer")
 
 class BPpotential(EAMpotential):
     def __init__(self, atom_types, input_dims, layers = None, offsets = None):
@@ -156,9 +166,10 @@ class EAMAtomicNN():
                 dtype = _tf.float64, name = "ANN_input_{}".format(t))
             self.b_maps[t] = _tf.sparse_placeholder(
                 dtype = _tf.float64, name = "b_map_{}".format(t))
-        self.offset = _tf.Variable(offset, dtype = _tf.float64, name = "offset")
+        self.offset = _tf.Variable(offset, dtype = _tf.float64, name = "offset",
+            collections = [_tf.GraphKeys.MODEL_VARIABLES, _tf.GraphKeys.GLOBAL_VARIABLES])
         _tf.summary.scalar("offset", self.offset, family = "modelParams")
-        self.variables = [self.offset]
+        #self.variables = [self.offset]
 
     def _post_setup(self):
         self.sum_rho = _tf.reduce_sum(
@@ -171,7 +182,7 @@ class EAMAtomicNN():
                 [_tf.sparse_tensor_dense_matmul(self.b_maps[t], self.pairPot[t])
                 for t in self.atom_types], axis = 0, name = "SumPairPot") + \
             self.F_out, self.offset, name = "AtomicEnergy")
-        self.init_vars = _tf.variables_initializer(self.variables)
+        #self.init_vars = _tf.variables_initializer(self.variables)
 
 class SMATBpotential(EAMpotential):
     def __init__(self, atom_types, initial_params = None, r0_trainable = False,
@@ -188,71 +199,10 @@ class SMATBpotential(EAMpotential):
             rho = {}
             for t1, t2 in combinations_with_replacement(atom_types, r = 2):
                 t12 = tuple(sorted([t1, t2]))
-                with _tf.variable_scope("{}_{}_PairPot".format(*t12), reuse = _tf.AUTO_REUSE):
-                    if ("A", t12[0], t12[1]) in initial_params:
-                        A[t12] = _tf.get_variable("A_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(
-                            initial_params[("A", t12[0], t12[1])],
-                            dtype = _tf.float64))
-                    else:
-                        A[t12] = _tf.get_variable("A_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(0.2,
-                            dtype = _tf.float64))
-                    _tf.summary.scalar("A_{}_{}".format(*t12), A[t12],
-                        family = "modelParams")
-                    if ("p", t12[0], t12[1]) in initial_params:
-                        p[t12] = _tf.get_variable("p_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(
-                            initial_params[("p", t12[0], t12[1])],
-                            dtype = _tf.float64))
-                    else:
-                        p[t12] = _tf.get_variable("p_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(9.2,
-                            dtype = _tf.float64))
-                    _tf.summary.scalar("p_{}_{}".format(*t12), p[t12],
-                        family = "modelParams")
-                with _tf.variable_scope("{}_{}_rho".format(*t12), reuse = _tf.AUTO_REUSE):
-                    if ("xi", t12[0], t12[1]) in initial_params:
-                        xi[t12] = _tf.get_variable("xi_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(
-                            initial_params[("xi", t12[0], t12[1])],
-                            dtype = _tf.float64))
-                    else:
-                        xi[t12] = _tf.get_variable("xi_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(1.6,
-                            dtype = _tf.float64))
-                    _tf.summary.scalar("xi_{}_{}".format(*t12), xi[t12],
-                        family = "modelParams")
-                    if ("q", t12[0], t12[1]) in initial_params:
-                        q[t12] = _tf.get_variable("q_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(
-                            initial_params[("q", t12[0], t12[1])],
-                            dtype = _tf.float64))
-                    else:
-                        q[t12] = _tf.get_variable("q_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(3.5,
-                            dtype = _tf.float64))
-                    _tf.summary.scalar("q_{}_{}".format(*t12), q[t12],
-                        family = "modelParams")
-                with _tf.variable_scope("{}_{}_r0".format(*t12), reuse = _tf.AUTO_REUSE):
-                    if ("r0", t12[0], t12[1]) in initial_params:
-                        r0[t12] = _tf.get_variable("r0_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(
-                            initial_params[("r0", t12[0], t12[1])],
-                            dtype = _tf.float64), trainable = r0_trainable)
-                    else:
-                        r0[t12] = _tf.get_variable("r0_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(2.7,
-                            dtype = _tf.float64), trainable = r0_trainable)
-                    if r0_trainable:
-                        _tf.summary.scalar("r0_{}_{}".format(*t12), r0[t12],
-                            family = "modelParams")
-
-                pairPot[t12] = lambda r: A[t12] * _tf.exp(
-                    -p[t12]*(r/r0[t12] - 1)) * poly_cutoff(r, cut_a, cut_b)
-
-                rho[t12] = lambda r: xi[t12]**2 * _tf.exp(
-                    -2.0*q[t12]*(r/r0[t12] - 1)) * poly_cutoff(r, cut_a, cut_b)
+                A[t12], p[t12], r0[t12], pairPot[t12] = SMATBpotential.build_pairPot(
+                    t12, initial_params, r0_trainable, cut_a, cut_b)
+                xi[t12], q[t12], _, rho[t12] = SMATBpotential.build_rho(
+                    t12, initial_params, r0_trainable, cut_a, cut_b)
 
             if offsets == None:
                 offsets = [0.0]*len(self.atom_types)
@@ -270,11 +220,103 @@ class SMATBpotential(EAMpotential):
                         with _tf.variable_scope("{}_{}_rho".format(*t12), reuse = _tf.AUTO_REUSE):
                             self.ANNs[t1].rho[t2] = rho[t12](
                                 self.ANNs[t1].inputs[t2])
-                        self.ANNs[t1].variables.extend(
-                            [A[t12], xi[t12], p[t12], q[t12], r0[t12]])
+                        #self.ANNs[t1].variables.extend(
+                        #    [A[t12], xi[t12], p[t12], q[t12], r0[t12]])
 
                     self.ANNs[t1]._post_setup()
             EAMpotential._post_setup(self)
+
+    @staticmethod
+    def build_pairPot(t12, initial_params, r0_trainable, cut_a, cut_b):
+        """ builds the pair potential for a given atom type tuple
+            t12 = (t1, t2)
+            returns: parameters A, p, r0 and the corresponding pair potential as
+                    a function of r
+        """
+        with _tf.variable_scope("{}_{}_PairPot".format(*t12), reuse = _tf.AUTO_REUSE):
+            if ("A", t12[0], t12[1]) in initial_params:
+                A_init = initial_params[("A", t12[0], t12[1])]
+            else:
+                A_init = 0.2
+            A = _tf.get_variable("A_{}_{}".format(*t12), dtype = _tf.float64,
+                initializer = _tf.constant(A_init, dtype = _tf.float64),
+                collections = [_tf.GraphKeys.MODEL_VARIABLES,
+                                _tf.GraphKeys.GLOBAL_VARIABLES])
+            _tf.summary.scalar("A_{}_{}".format(*t12), A, family = "modelParams")
+
+            if ("p", t12[0], t12[1]) in initial_params:
+                p_init = initial_params[("p", t12[0], t12[1])]
+            else:
+                p_init = 9.2
+            p = _tf.get_variable("p_{}_{}".format(*t12), dtype = _tf.float64,
+                initializer = _tf.constant(p_init, dtype = _tf.float64),
+                collections = [_tf.GraphKeys.MODEL_VARIABLES,
+                                _tf.GraphKeys.GLOBAL_VARIABLES])
+            _tf.summary.scalar("p_{}_{}".format(*t12), p, family = "modelParams")
+
+        with _tf.variable_scope("{}_{}_r0".format(*t12), reuse = _tf.AUTO_REUSE):
+            if ("r0", t12[0], t12[1]) in initial_params:
+                r0_init = initial_params[("r0", t12[0], t12[1])]
+            else:
+                r0_init = 2.7
+            r0 = _tf.get_variable("r0_{}_{}".format(*t12), dtype = _tf.float64,
+                initializer = _tf.constant(r0_init, dtype = _tf.float64),
+                trainable = r0_trainable,
+                collections = [_tf.GraphKeys.MODEL_VARIABLES,
+                                _tf.GraphKeys.GLOBAL_VARIABLES])
+            if r0_trainable:
+                _tf.summary.scalar("r0_{}_{}".format(*t12), r0,
+                    family = "modelParams")
+
+        pairPot = lambda r: A * _tf.exp(
+            -p*(r/r0 - 1)) * poly_cutoff(r, cut_a, cut_b)
+        return A, p, r0, pairPot
+
+    @staticmethod
+    def build_rho(t12, initial_params, r0_trainable, cut_a, cut_b):
+        """ builds the rho contribution for a given atom type tuple
+            t12 = (t1, t2)
+            returns: parameters xi, q, r0 and the corresponding rho contribution
+                    as a function of r
+        """
+        with _tf.variable_scope("{}_{}_rho".format(*t12), reuse = _tf.AUTO_REUSE):
+            if ("xi", t12[0], t12[1]) in initial_params:
+                xi_init = initial_params[("xi", t12[0], t12[1])]
+            else:
+                xi_init = 1.6
+            xi = _tf.get_variable("xi_{}_{}".format(*t12), dtype = _tf.float64,
+                initializer = _tf.constant(xi_init, dtype = _tf.float64),
+                collections = [_tf.GraphKeys.MODEL_VARIABLES,
+                                _tf.GraphKeys.GLOBAL_VARIABLES])
+            _tf.summary.scalar("xi_{}_{}".format(*t12), xi, family = "modelParams")
+
+            if ("q", t12[0], t12[1]) in initial_params:
+                q_init = initial_params[("q", t12[0], t12[1])]
+            else:
+                q_init = 3.5
+            q = _tf.get_variable("q_{}_{}".format(*t12), dtype = _tf.float64,
+                initializer = _tf.constant(q_init, dtype = _tf.float64),
+                collections = [_tf.GraphKeys.MODEL_VARIABLES,
+                                _tf.GraphKeys.GLOBAL_VARIABLES])
+            _tf.summary.scalar("q_{}_{}".format(*t12), q,
+                family = "modelParams")
+        with _tf.variable_scope("{}_{}_r0".format(*t12), reuse = _tf.AUTO_REUSE):
+            if ("r0", t12[0], t12[1]) in initial_params:
+                r0_init = initial_params[("r0", t12[0], t12[1])]
+            else:
+                r0_init = 2.7
+            r0 = _tf.get_variable("r0_{}_{}".format(*t12), dtype = _tf.float64,
+                initializer = _tf.constant(r0_init, dtype = _tf.float64),
+                trainable = r0_trainable,
+                collections = [_tf.GraphKeys.MODEL_VARIABLES,
+                                _tf.GraphKeys.GLOBAL_VARIABLES])
+            if r0_trainable:
+                _tf.summary.scalar("r0_{}_{}".format(*t12), r0,
+                    family = "modelParams")
+
+        rho = lambda r: xi**2 * _tf.exp(
+            -2.0*q*(r/r0 - 1)) * poly_cutoff(r, cut_a, cut_b)
+        return xi, q, r0, rho
 
 class NNEpotential(EAMpotential):
     def __init__(self, atom_types, layers = [20], initial_params = None, r0_trainable = False,
@@ -292,71 +334,10 @@ class NNEpotential(EAMpotential):
 
             for t1, t2 in combinations_with_replacement(atom_types, r = 2):
                 t12 = tuple(sorted([t1, t2]))
-                with _tf.variable_scope("{}_{}_PairPot".format(*t12), reuse = _tf.AUTO_REUSE):
-                    if ("A", t12[0], t12[1]) in initial_params:
-                        A[t12] = _tf.get_variable("A_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(
-                            initial_params[("A", t12[0], t12[1])],
-                            dtype = _tf.float64))
-                    else:
-                        A[t12] = _tf.get_variable("A_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(0.2,
-                            dtype = _tf.float64))
-                    _tf.summary.scalar("A_{}_{}".format(*t12), A[t12],
-                        family = "modelParams")
-                    if ("p", t12[0], t12[1]) in initial_params:
-                        p[t12] = _tf.get_variable("p_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(
-                            initial_params[("p", t12[0], t12[1])],
-                            dtype = _tf.float64))
-                    else:
-                        p[t12] = _tf.get_variable("p_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(9.2,
-                            dtype = _tf.float64))
-                    _tf.summary.scalar("p_{}_{}".format(*t12), p[t12],
-                        family = "modelParams")
-                with _tf.variable_scope("{}_{}_rho".format(*t12), reuse = _tf.AUTO_REUSE):
-                    if ("xi", t12[0], t12[1]) in initial_params:
-                        xi[t12] = _tf.get_variable("xi_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(
-                            initial_params[("xi", t12[0], t12[1])],
-                            dtype = _tf.float64))
-                    else:
-                        xi[t12] = _tf.get_variable("xi_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(1.6,
-                            dtype = _tf.float64))
-                    _tf.summary.scalar("xi_{}_{}".format(*t12), xi[t12],
-                        family = "modelParams")
-                    if ("q", t12[0], t12[1]) in initial_params:
-                        q[t12] = _tf.get_variable("q_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(
-                            initial_params[("q", t12[0], t12[1])],
-                            dtype = _tf.float64))
-                    else:
-                        q[t12] = _tf.get_variable("q_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(3.5,
-                            dtype = _tf.float64))
-                    _tf.summary.scalar("q_{}_{}".format(*t12), q[t12],
-                        family = "modelParams")
-                with _tf.variable_scope("{}_{}_r0".format(*t12), reuse = _tf.AUTO_REUSE):
-                    if ("r0", t12[0], t12[1]) in initial_params:
-                        r0[t12] = _tf.get_variable("r0_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(
-                            initial_params[("r0", t12[0], t12[1])],
-                            dtype = _tf.float64), trainable = r0_trainable)
-                    else:
-                        r0[t12] = _tf.get_variable("r0_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(2.7,
-                            dtype = _tf.float64), trainable = r0_trainable)
-                    if r0_trainable:
-                        _tf.summary.scalar("r0_{}_{}".format(*t12), r0[t12],
-                            family = "modelParams")
-
-                pairPot[t12] = lambda r: A[t12] * _tf.exp(
-                    -p[t12]*(r/r0[t12] - 1)) * poly_cutoff(r, cut_a, cut_b)
-
-                rho[t12] = lambda r: xi[t12]**2 * _tf.exp(
-                    -2.0*q[t12]*(r/r0[t12] - 1)) * poly_cutoff(r, cut_a, cut_b)
+                A[t12], p[t12], r0[t12], pairPot[t12] = SMATBpotential.build_pairPot(
+                    t12, initial_params, r0_trainable, cut_a, cut_b)
+                xi[t12], q[t12], _, rho[t12] = SMATBpotential.build_rho(
+                    t12, initial_params, r0_trainable, cut_a, cut_b)
 
             if offsets == None:
                 offsets = [0.0]*len(self.atom_types)
@@ -409,45 +390,8 @@ class NNERHOpotential(EAMpotential):
 
             for t1, t2 in combinations_with_replacement(atom_types, r = 2):
                 t12 = tuple(sorted([t1, t2]))
-                with _tf.variable_scope("{}_{}_PairPot".format(*t12), reuse = _tf.AUTO_REUSE):
-                    if ("A", t12[0], t12[1]) in initial_params:
-                        A[t12] = _tf.get_variable("A_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(
-                            initial_params[("A", t12[0], t12[1])],
-                            dtype = _tf.float64))
-                    else:
-                        A[t12] = _tf.get_variable("A_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(0.2,
-                            dtype = _tf.float64))
-                    _tf.summary.scalar("A_{}_{}".format(*t12), A[t12],
-                        family = "modelParams")
-                    if ("p", t12[0], t12[1]) in initial_params:
-                        p[t12] = _tf.get_variable("p_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(
-                            initial_params[("p", t12[0], t12[1])],
-                            dtype = _tf.float64))
-                    else:
-                        p[t12] = _tf.get_variable("p_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(9.2,
-                            dtype = _tf.float64))
-                    _tf.summary.scalar("p_{}_{}".format(*t12), p[t12],
-                        family = "modelParams")
-                with _tf.variable_scope("{}_{}_r0".format(*t12), reuse = _tf.AUTO_REUSE):
-                    if ("r0", t12[0], t12[1]) in initial_params:
-                        r0[t12] = _tf.get_variable("r0_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(
-                            initial_params[("r0", t12[0], t12[1])],
-                            dtype = _tf.float64), trainable = r0_trainable)
-                    else:
-                        r0[t12] = _tf.get_variable("r0_{}_{}".format(*t12),
-                            dtype = _tf.float64, initializer = _tf.constant(2.7,
-                            dtype = _tf.float64), trainable = r0_trainable)
-                    if r0_trainable:
-                        _tf.summary.scalar("r0_{}_{}".format(*t12), r0[t12],
-                            family = "modelParams")
-
-                pairPot[t12] = lambda r: A[t12] * _tf.exp(
-                    -p[t12]*(r/r0[t12] - 1)) * poly_cutoff(r, cut_a, cut_b)
+                A[t12], p[t12], r0[t12], pairPot[t12] = SMATBpotential.build_pairPot(
+                    t12, initial_params, r0_trainable, cut_a, cut_b)
 
                 def rho_temp(r):
                     for i, n in enumerate(layers2):
