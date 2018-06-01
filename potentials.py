@@ -102,7 +102,7 @@ class EAMpotential():
             self.sse = _tf.reduce_sum(_tf.square((self.target - self.E_predict)/
                 self.num_atoms), axis = 0, name = "SumSquaredError")
             _tf.summary.scalar("SSE", self.sse, family = "performance")
-        with _tf.name_scope("MSE"):
+        with _tf.name_scope("RMSE"):
             self.rmse = _tf.sqrt(_tf.losses.mean_squared_error(self.target,
                 self.E_predict, weights = 1.0/self.num_atoms**2))
             _tf.summary.scalar("RMSE", self.mse, family = "performance")
