@@ -105,7 +105,7 @@ class EAMpotential():
         with _tf.name_scope("RMSE"):
             self.rmse = _tf.sqrt(_tf.losses.mean_squared_error(self.target,
                 self.E_predict, weights = 1.0/self.num_atoms**2))
-            _tf.summary.scalar("RMSE", self.mse, family = "performance")
+            _tf.summary.scalar("RMSE", self.rmse, family = "performance")
 
         self.variables = _tf.get_collection(_tf.GraphKeys.MODEL_VARIABLES,
             scope = _tf.get_default_graph().get_name_scope())
