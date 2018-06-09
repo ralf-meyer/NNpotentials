@@ -29,6 +29,7 @@ from itertools import combinations_with_replacement
 def nn_layer(input_tensor, input_dim, output_dim, act = _tf.nn.selu,
   initial_bias = None, name = "layer"):
     with _tf.variable_scope(name):
+
         #weights = _tf.Variable(_tf.random_uniform([input_dim, output_dim],
         #    minval = -1./_np.sqrt(input_dim), maxval = 1./_np.sqrt(input_dim),
         #    dtype = _tf.float64), name = "W")
@@ -578,6 +579,87 @@ class NNERHOpotential(EAMpotential):
 
                     self.ANNs[t1]._post_setup()
             EAMpotential._post_setup(self)
+
+class NNVERHOpotential(EAMpotential):
+    def __init__(self, atom_types, layers_F = [20], layers_V = [20], layers_rho = [20],
+        initial_params = None, r0_trainable = False, cut_a = 5.4, cut_b = 8.1,
+        offsets = None):
+        with _tf.variable_scope("NNVERHOpot", reuse = _tf.AUTO_REUSE):
+            EAMpotential.__init__(self, atom_types)
+
+            r0 = {}
+            pairPot = {}
+            rho = {}
+
+            for t1, t2 in combinations_with_replacement(atom_types, r = 2):
+                t12 = tuple(sorted([t1, t2]))
+                pairPot[t12] = NNVERHOpotential.build_pairPot(t12,
+                    initial_params, layers_V, cut_a, cut_b, r0_trainable)
+
+                rho[t12] = NNRHOpotential.build_rho(t12, initial_params,
+                    layers_rho, cut_a, cut_b, r0_trainable)
+
+            if offsets == None:
+                offsets = [0.0]*len(self.atom_types)
+
+            for t1, offset in zip(self.atom_types, offsets):
+                with _tf.name_scope("{}_ANN".format(t1)):
+                    self.ANNs[t1] = EAMAtomicNN(atom_types, offset, "%s"%t1)
+                    self.ANNs[t1].F = NNEpotential.build_F(
+                        t1, initial_params, layers_F)
+
+                    for t2 in self.atom_types:
+                        t12 = tuple(sorted([t1, t2]))
+                        with _tf.variable_scope("{}_{}_PairPot".format(*t12), reuse = _tf.AUTO_REUSE):
+                            self.ANNs[t1].pairPot[t2] = pairPot[t12](
+                                self.ANNs[t1].inputs[t2])
+                        with _tf.variable_scope("{}_{}_rho".format(*t12), reuse = _tf.AUTO_REUSE):
+                            self.ANNs[t1].rho[t2] = rho[t12](
+                                self.ANNs[t1].inputs[t2])
+
+                    self.ANNs[t1]._post_setup()
+            EAMpotential._post_setup(self)
+
+    @staticmethod
+    def build_pairPot(t12, initial_params, layers, cut_a, cut_b, r0_trainable):
+        with _tf.variable_scope("{}_{}_PairPot".format(*t12), reuse = _tf.AUTO_REUSE):
+            if ("A", t12[0], t12[1]) in initial_params:
+                A_init = initial_params[("A", t12[0], t12[1])]
+            else:
+                A_init = 0.2
+            A = _tf.get_variable("A_{}_{}".format(*t12), dtype = _tf.float64,
+                initializer = _tf.constant(A_init, dtype = _tf.float64),
+                collections = [_tf.GraphKeys.MODEL_VARIABLES,
+                                _tf.GraphKeys.GLOBAL_VARIABLES])
+            _tf.summary.scalar("A_{}_{}".format(*t12), A, family = "modelParams")
+
+        with _tf.variable_scope("{}_{}_r0".format(*t12), reuse = _tf.AUTO_REUSE):
+            if ("r0", t12[0], t12[1]) in initial_params:
+                r0_init = initial_params[("r0", t12[0], t12[1])]
+            else:
+                r0_init = 2.7
+            r0 = _tf.get_variable("r0_{}_{}".format(*t12), dtype = _tf.float64,
+                initializer = _tf.constant(r0_init, dtype = _tf.float64),
+                trainable = r0_trainable,
+                collections = [_tf.GraphKeys.MODEL_VARIABLES,
+                                _tf.GraphKeys.GLOBAL_VARIABLES])
+            if r0_trainable:
+                _tf.summary.scalar("r0_{}_{}".format(*t12), r0,
+                    family = "modelParams")
+
+        def V(r):
+            for i, n in enumerate(layers):
+                if i == 0:
+                    layer, weights, bias = nn_layer(r/r0-1, 1, n,
+                        name = "hiddenLayer_%d"%(i+1))
+                else:
+                    # Use previous layer as input
+                    layer, weights, bias = nn_layer(layer,
+                        layers[i-1], n, name = "hiddenLayer_%d"%(i+1))
+            output, _, _ = nn_layer(layer, layers[-1], 1,
+                act = None, name = "outputLayer")
+            return A*((1.0 - _tf.exp(output))**2 - 1) * poly_cutoff(r, cut_a, cut_b)
+        return V
 
 class NNfreeERHOpotential(EAMpotential):
     def __init__(self, atom_types, layers_F = [20], layers_rho = [20],
