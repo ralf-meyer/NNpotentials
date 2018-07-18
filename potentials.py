@@ -2,23 +2,25 @@ import tensorflow as _tf
 import numpy as _np
 from itertools import combinations_with_replacement
 
-def nn_layer(input_tensor, input_dim, output_dim, act = _tf.nn.selu,
+precision = _tf.float32
+
+def nn_layer(input_tensor, input_dim, output_dim, act = _tf.nn.tanh,
   initial_bias = None, name = "layer"):
     with _tf.variable_scope(name):
-        weights = _tf.get_variable("w", dtype = _tf.float64,
+        weights = _tf.get_variable("w", dtype = precision,
             shape = [input_dim, output_dim], initializer = _tf.random_normal_initializer(
-            stddev = 1./_np.sqrt(input_dim), dtype = _tf.float64),
+            stddev = 1./_np.sqrt(input_dim), dtype = precision),
             collections = [_tf.GraphKeys.MODEL_VARIABLES,
                             _tf.GraphKeys.REGULARIZATION_LOSSES,
                             _tf.GraphKeys.GLOBAL_VARIABLES])
         if initial_bias == None:
-            biases = _tf.get_variable("b", dtype = _tf.float64, shape = [output_dim],
-                initializer = _tf.constant_initializer(0.01, dtype = _tf.float64),
+            biases = _tf.get_variable("b", dtype = precision, shape = [output_dim],
+                initializer = _tf.constant_initializer(0.01, dtype = precision),
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                             _tf.GraphKeys.GLOBAL_VARIABLES])
         else:
-            biases = _tf.get_variable("b", dtype = _tf.float64, shape = [output_dim],
-                initializer = _tf.constant_initializer(initial_bias, dtype = _tf.float64),
+            biases = _tf.get_variable("b", dtype = precision, shape = [output_dim],
+                initializer = _tf.constant_initializer(initial_bias, dtype = precision),
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                             _tf.GraphKeys.GLOBAL_VARIABLES])
         preactivate = _tf.matmul(input_tensor, weights) + biases
@@ -36,26 +38,27 @@ def poly_cutoff(input_tensor, cut_a, cut_b):
         return (1.0 - 10.0 * ((input_tensor-cut_a)/(cut_b-cut_a))**3 +
             15.0 * ((input_tensor-cut_a)/(cut_b-cut_a))**4 -
             6.0 * ((input_tensor-cut_a)/(cut_b-cut_a))**5) * \
-            _tf.cast(input_tensor < cut_b, dtype = _tf.float64) * \
-            _tf.cast(input_tensor > cut_a, dtype = _tf.float64) +\
-            1.0 * _tf.cast(input_tensor < cut_a, dtype = _tf.float64)
+            _tf.cast(input_tensor < cut_b, dtype = precision) * \
+            _tf.cast(input_tensor > cut_a, dtype = precision) +\
+            1.0 * _tf.cast(input_tensor < cut_a, dtype = precision)
 
 class AbstractANN():
     def __init__(self):
-        self.output = _tf.constant(0.0, dtype = _tf.float64)
+        self.output = _tf.constant(0.0, dtype = precision)
 
 class EAMpotential():
-    def __init__(self, atom_types):
-        self.target = _tf.placeholder(shape = (None,), dtype = _tf.float64,
+    def __init__(self, atom_types, error_scaling = 1000):
+        self.target = _tf.placeholder(shape = (None,), dtype = precision,
             name = "target")
         self.atom_types = atom_types
+        self.error_scaling = error_scaling
 
         self.ANNs = {}
         self.atom_maps = {}
 
         for t in self.atom_types:
             self.atom_maps[t] = _tf.sparse_placeholder(shape = (None, None),
-                dtype = _tf.float64, name = "{}_map".format(t))
+                dtype = precision, name = "{}_map".format(t))
 
     def _post_setup(self):
         self.E_predict = _tf.reduce_sum([
@@ -72,7 +75,8 @@ class EAMpotential():
         # Tensorflow operation that calculates the sum squared error per atom.
         # Note that the whole error per atom is squared.
         with _tf.name_scope("RMSE"):
-            self.rmse = _tf.sqrt(_tf.losses.mean_squared_error(self.target,
+            self.rmse = self.error_scaling*_tf.sqrt(
+                _tf.losses.mean_squared_error(self.target,
                 self.E_predict, weights = 1.0/self.num_atoms**2))
             _tf.summary.scalar("RMSE", self.rmse, family = "performance")
 
@@ -125,7 +129,7 @@ class EAMpotential():
 class BPAtomicNN():
     def __init__(self, input_dim, layers = [20], offset = 0):
         self.input = _tf.placeholder(shape = (None, input_dim),
-            dtype = _tf.float64, name = "ANN_input")
+            dtype = precision, name = "ANN_input")
         hidden_layers = []
         hidden_vars = []
         for i, n in enumerate(layers):
@@ -155,7 +159,7 @@ class BPpotential(EAMpotential):
             for (t, dims, lays, offs) in zip(atom_types, input_dims, layers, offsets):
                 with _tf.variable_scope("{}_ANN".format(t), reuse = _tf.AUTO_REUSE):
                     self.ANNs[t] = BPAtomicNN(dims, lays, offs)
-            
+
             EAMpotential._post_setup(self)
 
 class EAMAtomicNN():
@@ -171,10 +175,10 @@ class EAMAtomicNN():
         self.b_maps = {}
         for t in atom_types:
             self.inputs[t] = _tf.placeholder(shape = (None, 1),
-                dtype = _tf.float64, name = "ANN_input_{}".format(t))
+                dtype = precision, name = "ANN_input_{}".format(t))
             self.b_maps[t] = _tf.sparse_placeholder(
-                dtype = _tf.float64, name = "b_map_{}".format(t))
-        self.offset = _tf.Variable(offset, dtype = _tf.float64, name = "offset",
+                dtype = precision, name = "b_map_{}".format(t))
+        self.offset = _tf.Variable(offset, dtype = precision, name = "offset",
             collections = [_tf.GraphKeys.MODEL_VARIABLES, _tf.GraphKeys.GLOBAL_VARIABLES])
         _tf.summary.scalar("offset", self.offset, family = "modelParams")
 
@@ -245,8 +249,8 @@ class SMATBpotential(EAMpotential):
                 A_init = initial_params[("A", t12[0], t12[1])]
             else:
                 A_init = 0.2
-            A = _tf.get_variable("A_{}_{}".format(*t12), dtype = _tf.float64,
-                initializer = _tf.constant(A_init, dtype = _tf.float64),
+            A = _tf.get_variable("A_{}_{}".format(*t12), dtype = precision,
+                initializer = _tf.constant(A_init, dtype = precision),
                 trainable = pair_trainable,
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                                 _tf.GraphKeys.GLOBAL_VARIABLES])
@@ -256,8 +260,8 @@ class SMATBpotential(EAMpotential):
                 p_init = initial_params[("p", t12[0], t12[1])]
             else:
                 p_init = 9.2
-            p = _tf.get_variable("p_{}_{}".format(*t12), dtype = _tf.float64,
-                initializer = _tf.constant(p_init, dtype = _tf.float64),
+            p = _tf.get_variable("p_{}_{}".format(*t12), dtype = precision,
+                initializer = _tf.constant(p_init, dtype = precision),
                 trainable = pair_trainable,
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                                 _tf.GraphKeys.GLOBAL_VARIABLES])
@@ -268,8 +272,8 @@ class SMATBpotential(EAMpotential):
                 r0_init = initial_params[("r0", t12[0], t12[1])]
             else:
                 r0_init = 2.7
-            r0 = _tf.get_variable("r0_{}_{}".format(*t12), dtype = _tf.float64,
-                initializer = _tf.constant(r0_init, dtype = _tf.float64),
+            r0 = _tf.get_variable("r0_{}_{}".format(*t12), dtype = precision,
+                initializer = _tf.constant(r0_init, dtype = precision),
                 trainable = r0_trainable,
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                                 _tf.GraphKeys.GLOBAL_VARIABLES])
@@ -293,8 +297,8 @@ class SMATBpotential(EAMpotential):
                 xi_init = initial_params[("xi", t12[0], t12[1])]
             else:
                 xi_init = 1.6
-            xi = _tf.get_variable("xi_{}_{}".format(*t12), dtype = _tf.float64,
-                initializer = _tf.constant(xi_init, dtype = _tf.float64),
+            xi = _tf.get_variable("xi_{}_{}".format(*t12), dtype = precision,
+                initializer = _tf.constant(xi_init, dtype = precision),
                 trainable = rho_trainable,
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                                 _tf.GraphKeys.GLOBAL_VARIABLES])
@@ -304,8 +308,8 @@ class SMATBpotential(EAMpotential):
                 q_init = initial_params[("q", t12[0], t12[1])]
             else:
                 q_init = 3.5
-            q = _tf.get_variable("q_{}_{}".format(*t12), dtype = _tf.float64,
-                initializer = _tf.constant(q_init, dtype = _tf.float64),
+            q = _tf.get_variable("q_{}_{}".format(*t12), dtype = precision,
+                initializer = _tf.constant(q_init, dtype = precision),
                 trainable = rho_trainable,
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                                 _tf.GraphKeys.GLOBAL_VARIABLES])
@@ -316,8 +320,8 @@ class SMATBpotential(EAMpotential):
                 r0_init = initial_params[("r0", t12[0], t12[1])]
             else:
                 r0_init = 2.7
-            r0 = _tf.get_variable("r0_{}_{}".format(*t12), dtype = _tf.float64,
-                initializer = _tf.constant(r0_init, dtype = _tf.float64),
+            r0 = _tf.get_variable("r0_{}_{}".format(*t12), dtype = precision,
+                initializer = _tf.constant(r0_init, dtype = precision),
                 trainable = r0_trainable,
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                                 _tf.GraphKeys.GLOBAL_VARIABLES])
@@ -379,13 +383,13 @@ class NNEpotential(EAMpotential):
             else:
                 print("Using default parameters for NN norm")
                 mu_init, std_init = -30, 15
-            mu = _tf.get_variable("mu_rho_{}".format(t1), dtype = _tf.float64,
-                initializer = _tf.constant(mu_init, dtype = _tf.float64),
+            mu = _tf.get_variable("mu_rho_{}".format(t1), dtype = precision,
+                initializer = _tf.constant(mu_init, dtype = precision),
                 trainable = False,
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                                 _tf.GraphKeys.GLOBAL_VARIABLES])
-            std = _tf.get_variable("std_rho_{}".format(t1), dtype = _tf.float64,
-                initializer = _tf.constant(std_init, dtype = _tf.float64),
+            std = _tf.get_variable("std_rho_{}".format(t1), dtype = precision,
+                initializer = _tf.constant(std_init, dtype = precision),
                 trainable = False,
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                                 _tf.GraphKeys.GLOBAL_VARIABLES])
@@ -453,8 +457,8 @@ class NNRHOpotential(EAMpotential):
                 r0_init = initial_params[("r0", t12[0], t12[1])]
             else:
                 r0_init = 2.7
-            r0 = _tf.get_variable("r0_{}_{}".format(*t12), dtype = _tf.float64,
-                initializer = _tf.constant(r0_init, dtype = _tf.float64),
+            r0 = _tf.get_variable("r0_{}_{}".format(*t12), dtype = precision,
+                initializer = _tf.constant(r0_init, dtype = precision),
                 trainable = r0_trainable,
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                                 _tf.GraphKeys.GLOBAL_VARIABLES])
@@ -522,8 +526,8 @@ class NNVRHOpotential(EAMpotential):
                 r0_init = initial_params[("r0", t12[0], t12[1])]
             else:
                 r0_init = 2.7
-            r0 = _tf.get_variable("r0_{}_{}".format(*t12), dtype = _tf.float64,
-                initializer = _tf.constant(r0_init, dtype = _tf.float64),
+            r0 = _tf.get_variable("r0_{}_{}".format(*t12), dtype = precision,
+                initializer = _tf.constant(r0_init, dtype = precision),
                 trainable = r0_trainable,
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                                 _tf.GraphKeys.GLOBAL_VARIABLES])
@@ -636,8 +640,8 @@ class NNVERHOpotential(EAMpotential):
                 A_init = initial_params[("A", t12[0], t12[1])]
             else:
                 A_init = 0.2
-            A = _tf.get_variable("A_{}_{}".format(*t12), dtype = _tf.float64,
-                initializer = _tf.constant(A_init, dtype = _tf.float64),
+            A = _tf.get_variable("A_{}_{}".format(*t12), dtype = precision,
+                initializer = _tf.constant(A_init, dtype = precision),
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                                 _tf.GraphKeys.GLOBAL_VARIABLES])
             _tf.summary.scalar("A_{}_{}".format(*t12), A, family = "modelParams")
@@ -647,8 +651,8 @@ class NNVERHOpotential(EAMpotential):
                 r0_init = initial_params[("r0", t12[0], t12[1])]
             else:
                 r0_init = 2.7
-            r0 = _tf.get_variable("r0_{}_{}".format(*t12), dtype = _tf.float64,
-                initializer = _tf.constant(r0_init, dtype = _tf.float64),
+            r0 = _tf.get_variable("r0_{}_{}".format(*t12), dtype = precision,
+                initializer = _tf.constant(r0_init, dtype = precision),
                 trainable = r0_trainable,
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                                 _tf.GraphKeys.GLOBAL_VARIABLES])
@@ -721,8 +725,8 @@ class NNfreeERHOpotential(EAMpotential):
                 r0_init = initial_params[("r0", t12[0], t12[1])]
             else:
                 r0_init = 2.7
-            r0 = _tf.get_variable("r0_{}_{}".format(*t12), dtype = _tf.float64,
-                initializer = _tf.constant(r0_init, dtype = _tf.float64),
+            r0 = _tf.get_variable("r0_{}_{}".format(*t12), dtype = precision,
+                initializer = _tf.constant(r0_init, dtype = precision),
                 trainable = r0_trainable,
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                                 _tf.GraphKeys.GLOBAL_VARIABLES])
@@ -752,13 +756,13 @@ class NNfreeERHOpotential(EAMpotential):
             else:
                 print("Using default parameters for NN norm")
                 mu_init, std_init = -30, 15
-            mu = _tf.get_variable("mu_rho_{}".format(t1), dtype = _tf.float64,
-                initializer = _tf.constant(mu_init, dtype = _tf.float64),
+            mu = _tf.get_variable("mu_rho_{}".format(t1), dtype = precision,
+                initializer = _tf.constant(mu_init, dtype = precision),
                 trainable = False,
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                                 _tf.GraphKeys.GLOBAL_VARIABLES])
-            std = _tf.get_variable("std_rho_{}".format(t1), dtype = _tf.float64,
-                initializer = _tf.constant(std_init, dtype = _tf.float64),
+            std = _tf.get_variable("std_rho_{}".format(t1), dtype = precision,
+                initializer = _tf.constant(std_init, dtype = precision),
                 trainable = False,
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                                 _tf.GraphKeys.GLOBAL_VARIABLES])
@@ -837,7 +841,7 @@ def calculate_bp_maps(num_atom_types, _Gs, _types):
     Ns = [0]*num_atom_types
     indices = [[]]*num_atom_types
     atoms = [[]]*num_atom_types
-    
+
     for i, (G_vec, t_vec) in enumerate(zip(_Gs, _types)):
         for a in range(num_atom_types):
              atoms[a].append(_np.array(G_vec)[t_vec == a])
