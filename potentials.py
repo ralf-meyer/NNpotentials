@@ -2,7 +2,7 @@ import tensorflow as _tf
 import numpy as _np
 from itertools import combinations_with_replacement
 
-precision = _tf.float32
+precision = _tf.float64
 
 def nn_layer(input_tensor, input_dim, output_dim, act = _tf.nn.tanh,
   initial_bias = None, name = "layer"):
@@ -127,18 +127,20 @@ class EAMpotential():
                                 *list(phi_tab[k:(k+5)])))
 
 class BPAtomicNN():
-    def __init__(self, input_dim, layers = [20], offset = 0):
+    def __init__(self, input_dim, layers = [20], offset = 0,
+        act_funs = [_tf.nn.tanh]):
         self.input = _tf.placeholder(shape = (None, input_dim),
             dtype = precision, name = "ANN_input")
         hidden_layers = []
         hidden_vars = []
-        for i, n in enumerate(layers):
+        for i, (n, act) in enumerate(zip(layers, act_funs)):
             if i == 0:
                 layer, weights, bias = nn_layer(
-                    self.input, input_dim, n, name = "hiddenLayer_%d"%(i+1))
+                    self.input, input_dim, n, name = "hiddenLayer_%d"%(i+1),
+                        act = act)
             else:
                 layer, weights, bias = nn_layer(hidden_layers[-1], layers[i-1],
-                    n, name = "hiddenLayer_%d"%(i+1))
+                    n, name = "hiddenLayer_%d"%(i+1), act = act)
             hidden_layers.append(layer)
             hidden_vars.append(weights)
             hidden_vars.append(bias)
@@ -147,18 +149,24 @@ class BPAtomicNN():
             dtype = _np.float64), name = "outputLayer")
 
 class BPpotential(EAMpotential):
-    def __init__(self, atom_types, input_dims, layers = None, offsets = None):
+    def __init__(self, atom_types, input_dims, layers = None, offsets = None,
+        act_funs = None):
         with _tf.variable_scope("BPpot"):
             EAMpotential.__init__(self, atom_types)
 
             if layers == None:
-                layers = [20]*len(self.atom_types)
+                layers = [[20]]*len(self.atom_types)
             if offsets == None:
                 offsets = [0.0]*len(self.atom_types)
+            if act_funs == None:
+                act_funs = []
+                for lays in layers:
+                    act_funs.append([_tf.nn.tanh]*len(lays))
 
-            for (t, dims, lays, offs) in zip(atom_types, input_dims, layers, offsets):
+            for (t, dims, lays, offs, acts) in zip(atom_types, input_dims,
+                layers, offsets, act_funs):
                 with _tf.variable_scope("{}_ANN".format(t), reuse = _tf.AUTO_REUSE):
-                    self.ANNs[t] = BPAtomicNN(dims, lays, offs)
+                    self.ANNs[t] = BPAtomicNN(dims, lays, offs, acts)
 
             EAMpotential._post_setup(self)
 
