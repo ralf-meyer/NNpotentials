@@ -15,7 +15,7 @@ def nn_layer(input_tensor, input_dim, output_dim, act = _tf.nn.tanh,
                             _tf.GraphKeys.GLOBAL_VARIABLES])
         if initial_bias == None:
             biases = _tf.get_variable("b", dtype = precision, shape = [output_dim],
-                initializer = _tf.constant_initializer(0.01, dtype = precision),
+                initializer = _tf.constant_initializer(0.0, dtype = precision),
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                             _tf.GraphKeys.GLOBAL_VARIABLES])
         else:
@@ -82,7 +82,7 @@ class EAMpotential():
 
         self.variables = _tf.get_collection(_tf.GraphKeys.MODEL_VARIABLES,
             scope = _tf.get_default_graph().get_name_scope())
-        self.saver = _tf.train.Saver(self.variables)
+        self.saver = _tf.train.Saver(self.variables, max_to_keep = None, save_relative_paths = True)
 
     def export(self, sess, file_name, atomic_prop_dict, Nrho = 10000,
         drho = 0.03, Nr = 10000, dr = None, cutoff = 8.2):
