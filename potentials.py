@@ -23,7 +23,7 @@ def nn_layer(input_tensor, input_dim, output_dim, act = _tf.nn.tanh,
                 initializer = _tf.constant_initializer(initial_bias, dtype = precision),
                 collections = [_tf.GraphKeys.MODEL_VARIABLES,
                             _tf.GraphKeys.GLOBAL_VARIABLES])
-        preactivate = _tf.matmul(input_tensor, weights) + biases
+        preactivate = _tf.nn.xw_plus_b(input_tensor, weights, biases)
         if act == None:
             activations = preactivate
         else:
@@ -131,7 +131,7 @@ class BPAtomicNN():
         act_funs = [_tf.nn.tanh]):
         self.input = _tf.placeholder(shape = (None, input_dim),
             dtype = precision, name = "ANN_input")
-        hidden_layers = []
+        self.hidden_layers = []
         hidden_vars = []
         for i, (n, act) in enumerate(zip(layers, act_funs)):
             if i == 0:
@@ -139,12 +139,12 @@ class BPAtomicNN():
                     self.input, input_dim, n, name = "hiddenLayer_%d"%(i+1),
                         act = act)
             else:
-                layer, weights, bias = nn_layer(hidden_layers[-1], layers[i-1],
+                layer, weights, bias = nn_layer(self.hidden_layers[-1], layers[i-1],
                     n, name = "hiddenLayer_%d"%(i+1), act = act)
-            hidden_layers.append(layer)
+            self.hidden_layers.append(layer)
             hidden_vars.append(weights)
             hidden_vars.append(bias)
-        self.output, out_weights, out_bias = nn_layer(hidden_layers[-1],
+        self.output, out_weights, out_bias = nn_layer(self.hidden_layers[-1],
             layers[-1], 1, act = None, initial_bias = _np.array([offset],
             dtype = _np.float64), name = "outputLayer")
 
