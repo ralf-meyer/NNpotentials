@@ -75,9 +75,11 @@ class EAMpotential():
         # Tensorflow operation that calculates the sum squared error per atom.
         # Note that the whole error per atom is squared.
         with _tf.name_scope("RMSE"):
-            self.rmse = self.error_scaling*_tf.sqrt(
-                _tf.losses.mean_squared_error(self.target,
-                self.E_predict, weights = 1.0/self.num_atoms**2))
+            self.rmse = self.error_scaling*_tf.sqrt(_tf.reduce_mean(
+                (self.target-self.E_predict)**2/self.num_atoms**2))
+            #self.rmse = self.error_scaling*_tf.sqrt(
+            #    _tf.losses.mean_squared_error(self.target,
+            #    self.E_predict, weights = 1.0/self.num_atoms**2))
             self.rmse_summ = _tf.summary.scalar("RMSE", self.rmse, family = "performance")
 
         self.variables = _tf.get_collection(_tf.GraphKeys.MODEL_VARIABLES,
