@@ -866,4 +866,4 @@ def calculate_bp_maps(num_atom_types, _Gs, _types):
          indices[a] = _np.array(indices[a], dtype = _np.int64).reshape((-1,2))
          maps.append(_tf.SparseTensorValue(indices[a], [1.0]*Ns[a], [batchsize, Ns[a]]))
          atoms[a] = _np.concatenate(atoms[a])
-    return atoms, maps, Ns
+    return atoms, maps
