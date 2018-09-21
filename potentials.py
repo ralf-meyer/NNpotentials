@@ -75,8 +75,10 @@ class EAMpotential():
         # Tensorflow operation that calculates the sum squared error per atom.
         # Note that the whole error per atom is squared.
         with _tf.name_scope("RMSE"):
+            self.rmse_weights = tf.placeholder(shape = (None,),
+                dtype = precision, name = "weights")
             self.rmse = self.error_scaling*_tf.sqrt(_tf.reduce_mean(
-                (self.target-self.E_predict)**2/self.num_atoms**2))
+                (self.target-self.E_predict)**2*self.rmse_weights))
             #self.rmse = self.error_scaling*_tf.sqrt(
             #    _tf.losses.mean_squared_error(self.target,
             #    self.E_predict, weights = 1.0/self.num_atoms**2))
@@ -864,4 +866,4 @@ def calculate_bp_maps(num_atom_types, _Gs, _types):
          indices[a] = _np.array(indices[a], dtype = _np.int64).reshape((-1,2))
          maps.append(_tf.SparseTensorValue(indices[a], [1.0]*Ns[a], [batchsize, Ns[a]]))
          atoms[a] = _np.concatenate(atoms[a])
-    return atoms, maps
+    return atoms, maps, Ns
