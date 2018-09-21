@@ -2,7 +2,7 @@ import tensorflow as _tf
 import numpy as _np
 from itertools import combinations_with_replacement
 
-precision = _tf.float64
+precision = _tf.float32
 
 def nn_layer(input_tensor, input_dim, output_dim, act = _tf.nn.tanh,
   initial_bias = None, name = "layer"):
