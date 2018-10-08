@@ -135,6 +135,7 @@ class BPAtomicNN():
         act_funs = [_tf.nn.tanh]):
         self.input = _tf.placeholder(shape = (None, input_dim),
             dtype = precision, name = "ANN_input")
+
         self.hidden_layers = []
         hidden_vars = []
         for i, (n, act) in enumerate(zip(layers, act_funs)):
@@ -143,14 +144,22 @@ class BPAtomicNN():
                     self.input, input_dim, n, name = "hiddenLayer_%d"%(i+1),
                         act = act)
             else:
-                layer, weights, bias = nn_layer(self.hidden_layers[-1], layers[i-1],
-                    n, name = "hiddenLayer_%d"%(i+1), act = act)
+                layer, weights, bias = nn_layer(self.hidden_layers[-1],
+                    layers[i-1], n, name = "hiddenLayer_%d"%(i+1), act = act)
             self.hidden_layers.append(layer)
             hidden_vars.append(weights)
             hidden_vars.append(bias)
-        self.output, out_weights, out_bias = nn_layer(self.hidden_layers[-1],
-            layers[-1], 1, act = None, initial_bias = _np.array([offset],
-            dtype = _np.float64), name = "outputLayer")
+        if len(layers) > 0:
+            self.output, out_weights, out_bias = nn_layer(
+                self.hidden_layers[-1], layers[-1], 1, act = None,
+                initial_bias = _np.array([offset], dtype = _np.float64),
+                name = "outputLayer")
+        else:
+            self.output, out_weights, out_bias = nn_layer(
+                self.input, input_dim, 1, act = None,
+                initial_bias = _np.array([offset], dtype = _np.float64),
+                name = "outputLayer")
+
 
 class BPpotential(EAMpotential):
     def __init__(self, atom_types, input_dims, layers = None, offsets = None,
