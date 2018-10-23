@@ -1,37 +1,9 @@
 import tensorflow as _tf
+from core import nn_layer
 import numpy as _np
 from itertools import combinations_with_replacement
 
 precision = _tf.float32
-
-def nn_layer(input_tensor, input_dim, output_dim, act = _tf.nn.tanh,
-  initial_bias = None, name = "layer"):
-    with _tf.variable_scope(name):
-        weights = _tf.get_variable("w", dtype = precision,
-            shape = [input_dim, output_dim], initializer = _tf.random_normal_initializer(
-            stddev = 1./_np.sqrt(input_dim), dtype = precision),
-            collections = [_tf.GraphKeys.MODEL_VARIABLES,
-                            _tf.GraphKeys.REGULARIZATION_LOSSES,
-                            _tf.GraphKeys.GLOBAL_VARIABLES])
-        if initial_bias == None:
-            biases = _tf.get_variable("b", dtype = precision, shape = [output_dim],
-                initializer = _tf.constant_initializer(0.0, dtype = precision),
-                collections = [_tf.GraphKeys.MODEL_VARIABLES,
-                            _tf.GraphKeys.GLOBAL_VARIABLES])
-        else:
-            biases = _tf.get_variable("b", dtype = precision, shape = [output_dim],
-                initializer = _tf.constant_initializer(initial_bias, dtype = precision),
-                collections = [_tf.GraphKeys.MODEL_VARIABLES,
-                            _tf.GraphKeys.GLOBAL_VARIABLES])
-        preactivate = _tf.nn.xw_plus_b(input_tensor, weights, biases)
-        if act == None:
-            activations = preactivate
-        else:
-            activations = act(preactivate)
-        _tf.summary.histogram("weights", weights)
-        _tf.summary.histogram("biases", biases)
-        _tf.summary.histogram("activations", activations)
-        return activations, weights, biases
 
 def poly_cutoff(input_tensor, cut_a, cut_b):
     with _tf.name_scope("PolyCutoff"):
@@ -41,10 +13,6 @@ def poly_cutoff(input_tensor, cut_a, cut_b):
             _tf.cast(input_tensor < cut_b, dtype = precision) * \
             _tf.cast(input_tensor > cut_a, dtype = precision) +\
             1.0 * _tf.cast(input_tensor < cut_a, dtype = precision)
-
-class AbstractANN():
-    def __init__(self):
-        self.output = _tf.constant(0.0, dtype = precision)
 
 class EAMpotential():
     def __init__(self, atom_types, error_scaling = 1000):
@@ -129,59 +97,6 @@ class EAMpotential():
                             # There should be a better way instead of list()
                             fout.write("{:.14E}  {:.14E}  {:.14E}  {:.14E}  {:.14E}\n".format(
                                 *list(phi_tab[k:(k+5)])))
-
-class BPAtomicNN():
-    def __init__(self, input_dim, layers = [20], offset = 0,
-        act_funs = [_tf.nn.tanh]):
-        self.input = _tf.placeholder(shape = (None, input_dim),
-            dtype = precision, name = "ANN_input")
-
-        self.hidden_layers = []
-        hidden_vars = []
-        for i, (n, act) in enumerate(zip(layers, act_funs)):
-            if i == 0:
-                layer, weights, bias = nn_layer(
-                    self.input, input_dim, n, name = "hiddenLayer_%d"%(i+1),
-                        act = act)
-            else:
-                layer, weights, bias = nn_layer(self.hidden_layers[-1],
-                    layers[i-1], n, name = "hiddenLayer_%d"%(i+1), act = act)
-            self.hidden_layers.append(layer)
-            hidden_vars.append(weights)
-            hidden_vars.append(bias)
-        if len(layers) > 0:
-            self.output, out_weights, out_bias = nn_layer(
-                self.hidden_layers[-1], layers[-1], 1, act = None,
-                initial_bias = _np.array([offset], dtype = _np.float64),
-                name = "outputLayer")
-        else:
-            self.output, out_weights, out_bias = nn_layer(
-                self.input, input_dim, 1, act = None,
-                initial_bias = _np.array([offset], dtype = _np.float64),
-                name = "outputLayer")
-
-
-class BPpotential(EAMpotential):
-    def __init__(self, atom_types, input_dims, layers = None, offsets = None,
-        act_funs = None):
-        with _tf.variable_scope("BPpot"):
-            EAMpotential.__init__(self, atom_types)
-
-            if layers == None:
-                layers = [[20]]*len(self.atom_types)
-            if offsets == None:
-                offsets = [0.0]*len(self.atom_types)
-            if act_funs == None:
-                act_funs = []
-                for lays in layers:
-                    act_funs.append([_tf.nn.tanh]*len(lays))
-
-            for (t, dims, lays, offs, acts) in zip(atom_types, input_dims,
-                layers, offsets, act_funs):
-                with _tf.variable_scope("{}_ANN".format(t), reuse = _tf.AUTO_REUSE):
-                    self.ANNs[t] = BPAtomicNN(dims, lays, offs, acts)
-
-            EAMpotential._post_setup(self)
 
 class EAMAtomicNN():
     def __init__(self, atom_types, offset = 0.0, name = "ANN"):
@@ -800,52 +715,3 @@ class NNfreeERHOpotential(EAMpotential):
                 act = None, name = "outputLayer")
             return output
         return F
-
-
-def calculate_eam_maps(num_atom_types, _Gs, _types):
-    batchsize = len(_Gs)
-    r = [[[] for _ in range(num_atom_types)] for _ in range(num_atom_types)]
-    b_indices = [[[] for _ in range(num_atom_types)] for _ in range(num_atom_types)]
-    Ns = [0]*num_atom_types
-    indices = [[] for _ in range(num_atom_types)]
-
-    for i, (G_vec, t_vec) in enumerate(zip(_Gs, _types)):
-        for Gi, ti in zip(G_vec, t_vec):
-            indices[ti].append([i, Ns[ti]])
-            for tj in range(num_atom_types):
-                for j in range(len(Gi[tj])):
-                    b_indices[ti][tj].append([Ns[ti], len(r[ti][tj])+j])
-                r[ti][tj].extend(Gi[tj])
-            Ns[ti] += 1
-
-    # Cast into numpy arrays, also takes care of wrong dimensionality of empty lists
-    maps = []
-    b_maps = [[[] for _ in range(num_atom_types)] for _ in range(num_atom_types)]
-    for i in range(num_atom_types):
-        indices[i] = _np.array(indices[i], dtype = _np.int64).reshape((-1,2))
-        maps.append(_tf.SparseTensorValue(indices[i], [1.0]*Ns[i], [batchsize, Ns[i]]))
-        for j in range(num_atom_types):
-             b_indices[i][j] = _np.array(b_indices[i][j], dtype = _np.int64).reshape((-1,2))
-             b_maps[i][j] = _tf.SparseTensorValue(b_indices[i][j], [1.0]*len(r[i][j]), [Ns[i], len(r[i][j])])
-             r[i][j] = _np.array(r[i][j]).reshape((-1,1))
-    return r, b_maps, maps
-
-def calculate_bp_maps(num_atom_types, _Gs, _types):
-    batchsize = len(_Gs)
-    Ns = [0]*num_atom_types
-    indices = [[]]*num_atom_types
-    atoms = [[]]*num_atom_types
-
-    for i, (G_vec, t_vec) in enumerate(zip(_Gs, _types)):
-        for a in range(num_atom_types):
-             atoms[a].append(_np.array(G_vec)[t_vec == a])
-        for ti in t_vec:
-            indices[ti].append([i, Ns[ti]])
-            Ns[ti] += 1
-    # Cast into numpy arrays, also takes care of wrong dimensionality of empty lists
-    maps = []
-    for a in range(num_atom_types):
-         indices[a] = _np.array(indices[a], dtype = _np.int64).reshape((-1,2))
-         maps.append(_tf.SparseTensorValue(indices[a], [1.0]*Ns[a], [batchsize, Ns[a]]))
-         atoms[a] = _np.concatenate(atoms[a])
-    return atoms, maps

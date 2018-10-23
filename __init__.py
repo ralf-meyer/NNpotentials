@@ -1,1 +1,2 @@
-from potentials import *
+from BPpotential import BPpotential
+from EAMpotentials import *
