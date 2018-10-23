@@ -802,60 +802,33 @@ class NNfreeERHOpotential(EAMpotential):
         return F
 
 
-def calculate_eam_maps(_Gs, _types):
+def calculate_eam_maps(num_atom_types, _Gs, _types):
     batchsize = len(_Gs)
-    r_Ni_Ni = []
-    r_Ni_Au = []
-    r_Au_Ni = []
-    r_Au_Au = []
-    Ni_Ni_indices = []
-    Ni_Au_indices = []
-    Au_Ni_indices = []
-    Au_Au_indices = []
-    N_Ni = 0
-    N_Au = 0
-    Ni_indices = []
-    Au_indices = []
+    r = [[[] for _ in range(num_atom_types)] for _ in range(num_atom_types)]
+    b_indices = [[[] for _ in range(num_atom_types)] for _ in range(num_atom_types)]
+    Ns = [0]*num_atom_types
+    indices = [[] for _ in range(num_atom_types)]
+
     for i, (G_vec, t_vec) in enumerate(zip(_Gs, _types)):
         for Gi, ti in zip(G_vec, t_vec):
-            if ti == 0:
-                Ni_indices.append([i, N_Ni])
-                for j in range(len(Gi[0])):
-                    Ni_Ni_indices.append([N_Ni, len(r_Ni_Ni) + j])
-                for j in range(len(Gi[1])):
-                    Ni_Au_indices.append([N_Ni, len(r_Ni_Au) + j])
-                N_Ni += 1
-                r_Ni_Ni.extend(Gi[0])
-                r_Ni_Au.extend(Gi[1])
-            elif ti == 1:
-                Au_indices.append([i, N_Au])
-                for j in range(len(Gi[0])):
-                    Au_Ni_indices.append([N_Au, len(r_Au_Ni) + j])
-                for j in range(len(Gi[1])):
-                    Au_Au_indices.append([N_Au, len(r_Au_Au) + j])
-                N_Au += 1
-                r_Au_Ni.extend(Gi[0])
-                r_Au_Au.extend(Gi[1])
+            indices[ti].append([i, Ns[ti]])
+            for tj in range(num_atom_types):
+                for j in range(len(Gi[tj])):
+                    b_indices[ti][tj].append([Ns[ti], len(r[ti][tj])+j])
+                r[ti][tj].extend(Gi[tj])
+            Ns[ti] += 1
 
     # Cast into numpy arrays, also takes care of wrong dimensionality of empty lists
-    Ni_Ni_indices = _np.array(Ni_Ni_indices, dtype = _np.int64).reshape((-1,2))
-    Ni_Au_indices = _np.array(Ni_Au_indices, dtype = _np.int64).reshape((-1,2))
-    Au_Ni_indices = _np.array(Au_Ni_indices, dtype = _np.int64).reshape((-1,2))
-    Au_Au_indices = _np.array(Au_Au_indices, dtype = _np.int64).reshape((-1,2))
-    b_map_Ni_Ni = _tf.SparseTensorValue(Ni_Ni_indices, [1.0]*len(r_Ni_Ni), [N_Ni, len(r_Ni_Ni)])
-    b_map_Ni_Au = _tf.SparseTensorValue(Ni_Au_indices, [1.0]*len(r_Ni_Au), [N_Ni, len(r_Ni_Au)])
-    b_map_Au_Ni = _tf.SparseTensorValue(Au_Ni_indices, [1.0]*len(r_Au_Ni), [N_Au, len(r_Au_Ni)])
-    b_map_Au_Au = _tf.SparseTensorValue(Au_Au_indices, [1.0]*len(r_Au_Au), [N_Au, len(r_Au_Au)])
-    Ni_indices = _np.array(Ni_indices, dtype = _np.int64).reshape((-1,2))
-    Au_indices = _np.array(Au_indices, dtype = _np.int64).reshape((-1,2))
-    Ni_map = _tf.SparseTensorValue(Ni_indices, [1.0]*N_Ni, [batchsize, N_Ni])
-    Au_map = _tf.SparseTensorValue(Au_indices, [1.0]*N_Au, [batchsize, N_Au])
-    r_Ni_Ni = _np.array(r_Ni_Ni).reshape((-1,1))
-    r_Ni_Au = _np.array(r_Ni_Au).reshape((-1,1))
-    r_Au_Ni = _np.array(r_Au_Ni).reshape((-1,1))
-    r_Au_Au = _np.array(r_Au_Au).reshape((-1,1))
-
-    return r_Ni_Ni, r_Ni_Au, r_Au_Ni, r_Au_Au, b_map_Ni_Ni, b_map_Ni_Au, b_map_Au_Ni, b_map_Au_Au, Ni_map, Au_map
+    maps = []
+    b_maps = [[[] for _ in range(num_atom_types)] for _ in range(num_atom_types)]
+    for i in range(num_atom_types):
+        indices[i] = _np.array(indices[i], dtype = _np.int64).reshape((-1,2))
+        maps.append(_tf.SparseTensorValue(indices[i], [1.0]*Ns[i], [batchsize, Ns[i]]))
+        for j in range(num_atom_types):
+             b_indices[i][j] = _np.array(b_indices[i][j], dtype = _np.int64).reshape((-1,2))
+             b_maps[i][j] = _tf.SparseTensorValue(b_indices[i][j], [1.0]*len(r[i][j]), [Ns[i], len(r[i][j])])
+             r[i][j] = _np.array(r[i][j]).reshape((-1,1))
+    return r, b_maps, maps
 
 def calculate_bp_maps(num_atom_types, _Gs, _types):
     batchsize = len(_Gs)
