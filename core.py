@@ -1,4 +1,5 @@
 import tensorflow as _tf
+import numpy as _np
 import abc
 
 precision = _tf.float32
