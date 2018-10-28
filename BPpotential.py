@@ -7,16 +7,19 @@ class BPAtomicNN():
         act_funs = [_tf.nn.tanh]):
         self.input = _tf.placeholder(shape = (None, input_dim),
             dtype = precision, name = "ANN_input")
+        self.input = _tf.placeholder(shape = (None, input_dim),
+            dtype = precision, name = "ANN_input")
 
         # Start of with input layer as previous layer
         previous = self.input
-        self.hidden_layers = []
+        self.layers = []
         for i, (n, act) in enumerate(zip(layers, act_funs)):
             previous, _, _ = nn_layer(previous, previous.shape[-1].value,
                 n, name = "hiddenLayer_%d"%(i+1), act = act)
-            self.hidden_layers.append(previous)
+            self.layers.append(previous)
         self.output, _, _ = nn_layer(previous, previous.shape[-1].value,
             1, act = None, initial_bias = [offset], name = "outputLayer")
+        self.layers.append(self.output)
 
 
 class BPpotential(AtomicEnergyPotential):
